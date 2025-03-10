@@ -29,7 +29,6 @@ A high-performance C# service for validating and verifying **camt.053.001.02** b
 - **C# (.NET)**
 - **XML & XSD Schema Validation**
 - **LINQ to XML**
-- **SOLID Design Principles**
 
 ## 🤝 Contributing
 
