@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "Camt053Validator": {
+      "commandName": "Project",
+      "commandLineArgs": "C:\\Users\\GeorgiKalinkov\\Downloads\\GB48LHVB04030000004717_Account_Statement_2025_02_13.xml"
+    }
+  }
+}
