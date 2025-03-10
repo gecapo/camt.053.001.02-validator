@@ -7,7 +7,6 @@ A high-performance C# service for validating and verifying **camt.053.001.02** b
 - ✅ **XSD Schema Validation** – Ensures XML files conform to the official **camt.053.001.02** schema.
 - ✅ **Integrity Checks** – Verifies opening balance, transactions, and closing balance consistency.
 - ✅ **Extensible & Modular** – Implements an interface-driven approach (`ICamt053ValidatorService`) for easy integration.
-- ✅ **Best Practices** – Uses SOLID principles, constants separation, and clean code structure.
 
 ## 📌 Installation & Usage
 
