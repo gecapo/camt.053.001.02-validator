@@ -1,83 +1,120 @@
-﻿using System.Xml;
-using System.Xml.Schema;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Xml;
 using System.Xml.Linq;
+using System.Xml.Schema;
 
-public sealed class Camt053ValidatorService : ICamt053ValidatorService
+namespace Camt053Validator
 {
-    public void Validate(string xmlFilePath)
+    /// <summary>
+    /// Provides functionality to validate CAMT.053 bank statement XML files against
+    /// a schema and perform integrity checks on balances and transactions.
+    /// </summary>
+    public sealed class Camt053ValidatorService : ICamt053ValidatorService
     {
-        if (!File.Exists(xmlFilePath) || !File.Exists(Camt053Constants.XsdFilePath))
+        private readonly string _xsdPath;
+
+        public Camt053ValidatorService(string xsdFilePath = null)
         {
-            Console.WriteLine("Error: XML or XSD file not found.");
-            return;
+            _xsdPath = string.IsNullOrWhiteSpace(xsdFilePath)
+                ? Camt053Constants.XsdFilePath
+                : xsdFilePath;
         }
 
-        if (ValidateXml(xmlFilePath))
+        public ValidationResult Validate(string xmlFilePath)
         {
-            ValidateIntegrity(xmlFilePath);
-        }
-    }
+            if (string.IsNullOrWhiteSpace(xmlFilePath))
+                throw new ArgumentException("XML file path must be specified.", nameof(xmlFilePath));
 
-    private bool ValidateXml(string xmlFile)
-    {
-        XmlSchemaSet schemaSet = new XmlSchemaSet();
-        schemaSet.Add(null, Camt053Constants.XsdFilePath);
+            var result = new ValidationResult();
 
-        XmlReaderSettings settings = new XmlReaderSettings
-        {
-            Schemas = schemaSet,
-            ValidationType = ValidationType.Schema
-        };
-        settings.ValidationEventHandler += ValidationCallback!;
-
-        bool isValid = true;
-        try
-        {
-            using (XmlReader reader = XmlReader.Create(xmlFile, settings))
+            // Check for file existence
+            if (!File.Exists(xmlFilePath))
             {
+                result.IsSchemaValid = false;
+                result.Messages.Add($"XML file '{xmlFilePath}' was not found.");
+                return result;
+            }
+            if (!File.Exists(_xsdPath))
+            {
+                result.IsSchemaValid = false;
+                result.Messages.Add($"XSD file '{_xsdPath}' was not found.");
+                return result;
+            }
+
+            // Schema validation
+            result.IsSchemaValid = ValidateXmlSchema(xmlFilePath, result.Messages);
+
+            // Integrity validation
+            if (result.IsSchemaValid)
+                result.IsIntegrityValid = ValidateIntegrity(xmlFilePath, result.Messages);
+
+            return result;
+        }
+
+        private bool ValidateXmlSchema(string xmlFile, IList<string> messages)
+        {
+            var schemaSet = new XmlSchemaSet();
+            schemaSet.Add(null, _xsdPath);
+
+            var settings = new XmlReaderSettings
+            {
+                Schemas = schemaSet,
+                ValidationType = ValidationType.Schema
+            };
+            settings.ValidationEventHandler += (_, e) =>
+            {
+                messages.Add($"Schema validation error: {e.Message}");
+            };
+
+            try
+            {
+                using var reader = XmlReader.Create(xmlFile, settings);
                 while (reader.Read()) { }
             }
-            Console.WriteLine("XML schema validation passed.");
+            catch (Exception ex)
+            {
+                messages.Add($"Schema validation exception: {ex.Message}");
+                return false;
+            }
+
+            return !messages.Any(m => m.StartsWith("Schema validation error"));
         }
-        catch (Exception ex)
+
+        private bool ValidateIntegrity(string xmlFile, IList<string> messages)
         {
-            isValid = false;
-            Console.WriteLine($"Validation failed: {ex.Message}");
+            XDocument doc = XDocument.Load(xmlFile);
+            IEnumerable<XElement> transactions = doc.Descendants("Ntry");
+
+            decimal openingBalance = GetBalance(doc, Camt053Constants.OpeningBalanceType);
+            decimal closingBalance = GetBalance(doc, Camt053Constants.ClosingBalanceType);
+            decimal totalCredits = GetTransactionSum(transactions, Camt053Constants.CreditIndicator);
+            decimal totalDebits = GetTransactionSum(transactions, Camt053Constants.DebitIndicator);
+
+            if (openingBalance + totalCredits - totalDebits != closingBalance)
+            {
+                messages.Add("Integrity check failed: opening balance + credits - debits does not equal closing balance.");
+                return false;
+            }
+
+            return true;
         }
-        return isValid;
-    }
 
-    private void ValidationCallback(object sender, ValidationEventArgs e)
-    {
-        Console.WriteLine($"Validation error: {e.Message}");
-    }
-
-    private void ValidateIntegrity(string xmlFile)
-    {
-        XDocument doc = XDocument.Load(xmlFile);
-        var transactions = doc.Descendants("Ntry");
-
-        decimal openingBalance = GetBalance(doc, Camt053Constants.OpeningBalanceType);
-        decimal closingBalance = GetBalance(doc, Camt053Constants.ClosingBalanceType);
-        decimal totalCredits = GetTransactionSum(transactions, Camt053Constants.CreditIndicator);
-        decimal totalDebits = GetTransactionSum(transactions, Camt053Constants.DebitIndicator);
-
-        if (openingBalance + totalCredits - totalDebits != closingBalance)
+        private static decimal GetBalance(XDocument doc, string balanceType)
         {
-            Console.WriteLine("Integrity check failed: Opening balance + Credits - Debits does not match Closing balance.");
+            return doc.Descendants("Bal")
+                      .Where(b => b.Element("Tp")?.Value == balanceType)
+                      .Select(b => decimal.TryParse(b.Element("Amt")?.Value, out var bal) ? bal : 0)
+                      .FirstOrDefault();
         }
-        else
+
+        private static decimal GetTransactionSum(IEnumerable<XElement> transactions, string type)
         {
-            Console.WriteLine("Integrity check passed.");
+            return transactions
+                .Where(t => t.Element("CdtDbtInd")?.Value == type)
+                .Sum(t => decimal.TryParse(t.Element("Amt")?.Value, out var bal) ? bal : 0);
         }
     }
-
-    private static decimal GetBalance(XDocument doc, string balanceType) => doc.Descendants("Bal")
-            .Where(b => b.Element("Tp")?.Value == balanceType)
-            .Select(b => decimal.TryParse(b.Element("Amt")?.Value, out var bal) ? bal : 0)
-            .FirstOrDefault();
-
-    private static decimal GetTransactionSum(IEnumerable<XElement> transactions, string type) =>
-        transactions.Where(t => t.Element("CdtDbtInd")?.Value == type)
-            .Sum(t => decimal.TryParse(t.Element("Amt")?.Value, out var bal) ? bal : 0);
 }
